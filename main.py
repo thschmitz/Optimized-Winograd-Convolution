@@ -56,26 +56,59 @@ class Winograd(object):
 
     def winograd_matrices_1d(self, m, r, points=None, canonical_F23=False, dtype=torch.double, device=None):
         """
-        Gera (B, G, A) 1D para F(m, r) usando pontos de interpolação.
-        Retorna B (t×t), G (t×r), A (t×m) — compatíveis com Y = A^T[(Gg)⊙(B^Td)].
+        Gera (B, G, A) 1D.
+        - Se canonical_F23 e (m,r)==(2,3): retorna as matrizes canônicas que batem bit a bit com a convolução.
+        - Caso contrário: gerador "experimental" à base de Vandermonde (pode não coincidir com a conv direta).
+        Retorna: B (t×t), G (t×r), A (t×m) e os 'pontos' usados (tensor).
         """
         t = m + r - 1
-        a = self._pick_points(t) if points is None else torch.tensor(points, dtype=torch.double)
-        assert len(a) == t and torch.unique(a).numel() == t, "precisa de t pontos distintos"
 
-        V_t_t = self._vandermonde(a, t).to(dtype)     # t x t
-        V_t_r = self._vandermonde(a, r).to(dtype)     # t x r
+        # ---- RAMO CANÔNICO: F(2,3) ----
+        if canonical_F23 and (m, r) == (2, 3):
+            B = torch.tensor([
+                [ 1.,  0.,  0.,  0.],
+                [ 0.,  1., -1.,  1.],
+                [-1.,  1.,  1.,  0.],
+                [ 0.,  0.,  0., -1.],
+            ], dtype=dtype, device=device)
+            G = torch.tensor([
+                [1.,   0.,   0. ],
+                [0.5,  0.5,  0.5],
+                [0.5, -0.5,  0.5],
+                [0.,   0.,   1. ],
+            ], dtype=dtype, device=device)
+            A = torch.tensor([
+                [1.,  0.],
+                [1.,  1.],
+                [1., -1.],
+                [0., -1.],
+            ], dtype=dtype, device=device)
+            pts = torch.tensor([0.0, 1.0, -1.0, float("inf")], dtype=dtype, device=device)
+            return B, G, A, pts
 
-        Vinv = torch.linalg.inv(V_t_t)           # t x t
-        S = torch.zeros((m, t), dtype=dtype)     # m x t
-        S[torch.arange(m), torch.arange(m)] = 1  # seleciona coef 0..m-1
+        # ---- GERADOR EXPERIMENTAL (não garante igualdade exata) ----
+        # pontos
+        if points is None:
+            a = self._pick_points(t).to(dtype=dtype, device=device)  # 0, 1, -1, 2, -2, ...
+        else:
+            a = torch.tensor(points, dtype=dtype, device=device)
 
-        G = V_t_r                                 # t x r
-        B = V_t_t.T                               # t x t  (pois B^T = V)
-        A_T = S @ Vinv                            # m x t
-        A = A_T.T                                 # t x m
+        # Vandermonde simples (sem ∞)
+        V_t_t = self._vandermonde(a, t).to(dtype=dtype, device=device)  # t x t
+        V_t_r = self._vandermonde(a, r).to(dtype=dtype, device=device)  # t x r
+        Vinv = torch.linalg.inv(V_t_t)
 
-        return B, G, A, a  # também retorna os pontos usados
+        # SELETOR CORRETO: graus r-1 .. r+m-2
+        S = torch.zeros((m, t), dtype=dtype, device=device)
+        S[torch.arange(m, device=device), torch.arange(m, device=device) + (r - 1)] = 1.0
+
+        G = V_t_r                    # t x r  (avaliar kernel)
+        B = V_t_t.T                  # t x t  (avaliar tile 1D em 2D via B^T d B)
+        A = (S @ Vinv).T             # t x m  (interpolar e selecionar coeficientes centrais)
+
+        return B, G, A, a
+
+
 
     def forward(self, input, filter):
         """
