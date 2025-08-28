@@ -12,10 +12,32 @@ class Winograd(object):
             self.filter = filter
 
     @staticmethod
-    def __convert_sympy_to_torch_tensor(M, dtype, device):
-        return torch.tensor([[float(M[i, j]) for j in range(M.shape[1])]
-                             for i in range(M.shape[0])],
-                            dtype=dtype, device=device)
+    def __convert_sympy_to_torch_tensor(M, dtype, device, tol=1e-12):
+        rows, cols = M.shape
+        data = []
+        complex_detected = False
+
+        for i in range(rows):
+            row = []
+            for j in range(cols):
+                # Avalia numericamente e converte para número complexo do Python
+                z = complex(M[i, j].evalf())
+                if abs(z.imag) > tol:
+                    complex_detected = True
+                # Guardamos sempre como float real aqui; se for "quase real", tomamos a parte real
+                row.append(float(z.real))
+            data.append(row)
+
+        if complex_detected:
+            raise ValueError(
+                "As matrizes de transformação (AT/G/BT) possuem entradas complexas "
+                "(parte imaginária significativa). Ajuste os pontos de interpolação "
+                "ou o método de geração para obter matrizes reais, ou promova o fluxo "
+                "todo para dtype complexo."
+            )
+
+        return torch.tensor(data, dtype=dtype, device=device)
+
 
 
     def forward(self, input, filter):
