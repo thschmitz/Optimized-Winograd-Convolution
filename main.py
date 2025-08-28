@@ -49,11 +49,21 @@ class Winograd(object):
         for n in range(numberInput):
             for tH in range(tilesPerDimH):
                 for tW in range(tilesPerDimW):
-                    y0 = tH * outputSize
-                    x0 = tW * outputSize
+                    beginBlockY = tH * outputSize
+                    beginBlockX = tW * outputSize
 
-                    patch = input[n, :, y0:y0+entryBlockSize, x0:x0+entryBlockSize]
+                    patch = input[n, :, beginBlockY:beginBlockY+entryBlockSize, beginBlockX:beginBlockX+entryBlockSize]
 
-                    for k in range(channelsInput):
+                    for c in range(channelsInput):
                         tilesTransformed[c, tileIndex] = self.B_T @ patch[c] @ self.B
                     tileIndex += 1
+
+        hamadardMatrice = torch.zeros((numberFilter, totalTiles, entryBlockSize, entryBlockSize), dtype=input.dtype, device=input.device)
+        for i in range(numberFilter):
+            for b in range(totalTiles):
+                productMatrice = torch.zeros((entryBlockSize, entryBlockSize), dtype=input.dtype, device=input.device)
+
+                for c in range(channelsInput):
+                    productMatrice += filterTransformed[i, c] * tilesTransformed[c, b]
+                
+                hamadardMatrice[i, b] = productMatrice
