@@ -1,5 +1,6 @@
 import matricesSimpyGeneration
 import torch
+import torch.nn.functional as F
 
 class Winograd(object):
 
@@ -10,6 +11,13 @@ class Winograd(object):
         if filter is not None:
             self.filter = filter
 
+    @staticmethod
+    def __convert_sympy_to_torch_tensor(M, dtype, device):
+        return torch.tensor([[float(M[i, j]) for j in range(M.shape[1])]
+                             for i in range(M.shape[0])],
+                            dtype=dtype, device=device)
+
+
     def forward(self, input, filter):
         numberInput, channelsInput, heightInput, widthInput = input.size()
 
@@ -17,26 +25,26 @@ class Winograd(object):
 
         assert heightInput == widthInput
         assert heightFilter == widthFilter
+        assert channelsFilter == channelsInput
+        outputTileSize = 2 
 
-        outputSize = heightInput - heightFilter + 1
+        AT_sym,G_sym,BT_sym,f = matricesSimpyGeneration.constructTransformationMatrices(outputTileSize, heightFilter)
 
-        AT,G,BT,f = matricesSimpyGeneration.constructTransformationMatrices(outputSize, heightFilter)
+        self.A_T = self.__convert_sympy_to_torch_tensor(AT_sym, input.dtype, input.device)
+        self.A = torch.transpose(self.A_T, 0, 1)
+        self.B_T = self.__convert_sympy_to_torch_tensor(BT_sym, input.dtype, input.device)
+        self.B = torch.transpose(self.B_T, 0, 1)
+        self.G = self.__convert_sympy_to_torch_tensor(G_sym, input.dtype, input.device)
+        self.G_T = torch.transpose(self.G, 0 ,1)
 
-        self.A_T = AT
-        self.A = torch.transpose(AT, 0, 1)
-        self.B_T = BT
-        self.B = torch.transpose(BT, 0, 1)
-        self.G = G
-        self.G_T = torch.transpose(G, 0 ,1)
-
-        entryBlockSize = outputSize + heightFilter - 1
+        entryBlockSize = outputTileSize + heightFilter - 1
 
         assert heightInput >= entryBlockSize and widthInput >= entryBlockSize, "Input menor que um tile Winograd."
-        assert (heightInput - entryBlockSize) % outputSize == 0 and (widthInput - entryBlockSize) % outputSize == 0, \
+        assert (heightInput - entryBlockSize) % outputTileSize == 0 and (widthInput - entryBlockSize) % outputTileSize == 0, \
             "Somente tiling perfeito (sem padding) é suportado: (H-a) e (W-a) devem ser múltiplos de m."
         
-        tilesPerDimH = (heightInput - entryBlockSize) // outputSize + 1
-        tilesPerDimW = (widthInput - entryBlockSize) // outputSize + 1
+        tilesPerDimH = (heightInput - entryBlockSize) // outputTileSize + 1
+        tilesPerDimW = (widthInput - entryBlockSize) // outputTileSize + 1
         totalTiles = numberInput * tilesPerDimH * tilesPerDimW
 
         filterTransformed = torch.zeros((numberFilter, channelsInput, entryBlockSize, entryBlockSize), dtype=input.dtype, device=input.device)
@@ -49,8 +57,8 @@ class Winograd(object):
         for n in range(numberInput):
             for tH in range(tilesPerDimH):
                 for tW in range(tilesPerDimW):
-                    beginBlockY = tH * outputSize
-                    beginBlockX = tW * outputSize
+                    beginBlockY = tH * outputTileSize
+                    beginBlockX = tW * outputTileSize
 
                     patch = input[n, :, beginBlockY:beginBlockY+entryBlockSize, beginBlockX:beginBlockX+entryBlockSize]
 
@@ -58,7 +66,7 @@ class Winograd(object):
                         tilesTransformed[c, tileIndex] = self.B_T @ patch[c] @ self.B
                     tileIndex += 1
 
-        hamadardMatrice = torch.zeros((numberFilter, totalTiles, entryBlockSize, entryBlockSize), dtype=input.dtype, device=input.device)
+        hadamardMatrice = torch.zeros((numberFilter, totalTiles, entryBlockSize, entryBlockSize), dtype=input.dtype, device=input.device)
         for i in range(numberFilter):
             for b in range(totalTiles):
                 productMatrice = torch.zeros((entryBlockSize, entryBlockSize), dtype=input.dtype, device=input.device)
@@ -66,4 +74,34 @@ class Winograd(object):
                 for c in range(channelsInput):
                     productMatrice += filterTransformed[i, c] * tilesTransformed[c, b]
                 
-                hamadardMatrice[i, b] = productMatrice
+                hadamardMatrice[i, b] = productMatrice
+
+        outputHeight = heightInput - heightFilter + 1
+        outputWidth = widthInput - widthFilter + 1
+
+        outputMatrice = torch.zeros((numberInput, numberFilter, outputHeight, outputWidth), dtype=input.dtype, device=input.device)
+        tile = 0
+        for i in range(numberInput):
+            for tileHeight in range(tilesPerDimH):
+                for tileWidth in range(tilesPerDimW):
+                    beginBlockY = tileHeight * outputTileSize
+                    beginBlockX = tileWidth * outputTileSize
+
+                    for j in range(numberFilter):
+                        block = self.A @ hadamardMatrice[j, tile] @ self.A_T
+                        outputMatrice[i, j, beginBlockY:beginBlockY+outputTileSize, beginBlockX:beginBlockX+outputTileSize] = block
+                    tile += 1
+
+        return outputMatrice
+
+N, C, H, W = 1, 3, 32, 32
+K, r = 4, 3
+x = torch.randn(N, C, H, W, dtype=torch.double)
+w = torch.randn(K, C, r, r, dtype=torch.double)
+
+win = Winograd()
+y_win = win.forward(x, w)
+y_ref = F.conv2d(x, w, bias=None, stride=1, padding=0)
+
+print("shapes:", y_win.shape, y_ref.shape)
+print("max|diff|:", (y_win - y_ref).abs().max().item())
