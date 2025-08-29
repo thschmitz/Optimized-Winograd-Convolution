@@ -156,14 +156,18 @@ def showCookToomConvolution(a,n,r,fractionsIn=FractionsInG):
         print ("")
 
 def constructTransformationMatrices(outputSize, filterSize):
-    pointsList = []
-    for i in range(outputSize+1):
-        if(len(pointsList) < outputSize + 1):
-            pointsList.append(i)
-        if(len(pointsList) < outputSize + 1):
-            pointsList.append(i * -1)
-
-    return cookToomFilter(pointsList,outputSize,filterSize)
+    # The number of points needed is alpha = m + r - 1
+    alpha = outputSize + filterSize - 1
+    
+    pointsList = [0]
+    i = 1
+    while len(pointsList) < alpha:
+        pointsList.append(i)
+        if len(pointsList) < alpha:
+            pointsList.append(-i)
+        i += 1
+        
+    return cookToomFilter(pointsList, outputSize, filterSize)
 
 showCookToomFilter((0,1, -1, 2, -2), 4, 3);
 showCookToomConvolution((0, 1, -1), 2, 3)

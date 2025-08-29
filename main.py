@@ -71,7 +71,7 @@ class Winograd(object):
 
         filterTransformed = torch.zeros((numberFilter, channelsInput, entryBlockSize, entryBlockSize), dtype=input.dtype, device=input.device)
         for k in range(numberFilter):
-            for c in range(channelsFilter):
+            for c in range(channelsInput):
                 filterTransformed[k,c] = self.G @ filter[k, c] @ self.G_T
 
         tileIndex = 0
@@ -85,7 +85,7 @@ class Winograd(object):
                     patch = input[n, :, beginBlockY:beginBlockY+entryBlockSize, beginBlockX:beginBlockX+entryBlockSize]
 
                     for c in range(channelsInput):
-                        tilesTransformed[c, tileIndex] = self.B_T @ patch[c] @ self.B
+                        tilesTransformed[tileIndex, c] = self.B_T @ patch[c] @ self.B
                     tileIndex += 1
 
         hadamardMatrice = torch.zeros((numberFilter, totalTiles, entryBlockSize, entryBlockSize), dtype=input.dtype, device=input.device)
@@ -94,7 +94,7 @@ class Winograd(object):
                 productMatrice = torch.zeros((entryBlockSize, entryBlockSize), dtype=input.dtype, device=input.device)
 
                 for c in range(channelsInput):
-                    productMatrice += filterTransformed[i, c] * tilesTransformed[c, b]
+                    productMatrice += filterTransformed[i, c] * tilesTransformed[b, c]
                 
                 hadamardMatrice[i, b] = productMatrice
 
@@ -110,7 +110,7 @@ class Winograd(object):
                     beginBlockX = tileWidth * outputTileSize
 
                     for j in range(numberFilter):
-                        block = self.A @ hadamardMatrice[j, tile] @ self.A_T
+                        block = self.A_T @ hadamardMatrice[j, tile] @ self.A
                         outputMatrice[i, j, beginBlockY:beginBlockY+outputTileSize, beginBlockX:beginBlockX+outputTileSize] = block
                     tile += 1
 
