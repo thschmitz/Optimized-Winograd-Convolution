@@ -168,6 +168,3 @@ def constructTransformationMatrices(outputSize, filterSize):
         i += 1
         
     return cookToomFilter(pointsList, outputSize, filterSize)
-
-showCookToomFilter((0,1, -1, 2, -2), 4, 3);
-showCookToomConvolution((0, 1, -1), 2, 3)
